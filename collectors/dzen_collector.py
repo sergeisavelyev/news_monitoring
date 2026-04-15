@@ -117,8 +117,17 @@ def _parse_articles(markdown: str, query: str) -> list[dict]:
     return articles
 
 
-def _collect_with_scroll(browser_id: str, url: str) -> str:
-    """Open page, scroll SCROLL_ROUNDS times, accumulate markdown."""
+_JS_ARTICLE_LINKS = (
+    "Array.from(document.querySelectorAll('a[href*=\"utm_source=yxnews\"]'))"
+    ".map(a => a.href)"
+)
+
+
+def _collect_with_scroll(browser_id: str, url: str) -> tuple[str, list[str]]:
+    """Open page, scroll SCROLL_ROUNDS times, accumulate markdown.
+    Returns (markdown, article_urls) where article_urls are real source URLs
+    extracted from DOM via JS eval (same order as articles on page).
+    """
     ba(["browser", "open", browser_id, url], timeout=90)
     ba(["wait", "stable", "--timeout", "20000"], timeout=35)
 
@@ -142,7 +151,18 @@ def _collect_with_scroll(browser_id: str, url: str) -> str:
             break
         prev_len = len(all_markdown)
 
-    return all_markdown
+    # Extract real article URLs from DOM after all scrolling is done (deduplicated, order preserved)
+    r = ba(["eval", _JS_ARTICLE_LINKS], timeout=15)
+    raw_links: list[str] = r.get("result", []) if r else []
+    seen_links: set[str] = set()
+    article_links: list[str] = []
+    for lnk in raw_links:
+        if lnk not in seen_links:
+            seen_links.add(lnk)
+            article_links.append(lnk)
+    logger.debug("JS eval: %d article links extracted (%d raw)", len(article_links), len(raw_links))
+
+    return all_markdown, article_links
 
 
 class DzenCollector(BaseCollector):
@@ -158,21 +178,26 @@ class DzenCollector(BaseCollector):
             url = DZEN_SEARCH.format(query=quote(query))
             logger.info("Dzen: scraping %r", query)
 
-            markdown = _collect_with_scroll(self.browser_id, url)
+            markdown, article_links = _collect_with_scroll(self.browser_id, url)
             if not markdown:
                 logger.warning("Dzen: no markdown for query %r", query)
                 continue
 
             articles = _parse_articles(markdown, query)
-            logger.info("Dzen: parsed %d articles for %r", len(articles), query)
+            logger.info("Dzen: parsed %d articles, %d real URLs for %r",
+                        len(articles), len(article_links), query)
 
-            for a in articles:
-                if a["url"] in seen_urls:
+            for i, a in enumerate(articles):
+                # Use real article URL if available (positional match), else synthetic
+                real_url = article_links[i] if i < len(article_links) else a["url"]
+                dedup_url = real_url
+
+                if dedup_url in seen_urls:
                     continue
-                seen_urls.add(a["url"])
+                seen_urls.add(dedup_url)
                 items.append(NewsItem(
                     title=a["title"],
-                    url=a["url"],
+                    url=real_url,
                     source=f"Dzen / {a['source_label']}",
                     source_type="dzen",
                     snippet=a["snippet"],

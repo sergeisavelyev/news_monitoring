@@ -1,9 +1,9 @@
 # Спецификация: Интеллектуальный мониторинг новостей
 ## «Медиагруппа РИМ» / Rim Group
 
-**Версия:** 1.1  
+**Версия:** 1.3  
 **Дата:** 2026-04-15  
-**Статус:** В разработке (Phase 1 завершена)  
+**Статус:** В разработке (Phase 2 завершена)  
 
 ---
 
@@ -17,27 +17,29 @@
 | SQLite хранилище | `storage/sqlite_storage.py` | ✅ |
 | Хеширование + дедупликация | `processing/content_hasher.py`, `deduplicator.py` | ✅ |
 | Keyword filter (regex) | `processing/keyword_filter.py` | ✅ |
-| Pipeline оркестратор | `processing/pipeline.py` | ✅ |
+| Pipeline оркестратор (async) | `processing/pipeline.py` | ✅ |
 | LLM клиент (Anthropic/OpenAI) | `ai/llm_client.py` | ✅ |
 | LLM фильтр релевантности | `ai/relevance_filter.py` | ✅ |
 | LLM суммаризатор | `ai/summarizer.py` | ✅ |
 | Google News RSS коллектор | `collectors/google_news.py` | ✅ |
-| Sostav.ru коллектор (browser-act CLI) | `collectors/sostav_collector.py` | ✅ |
+| Sostav.ru коллектор (browser-act CLI) | `collectors/sostav_collector.py` | ✅ *(нестабилен — WebSocket ошибки)* |
+| AdIndex коллектор (browser-act CLI) | `collectors/adindex_collector.py` | ✅ |
+| Dzen.ru коллектор (browser-act CLI) | `collectors/dzen_collector.py` | ✅ |
+| browser-act утилиты (shared) | `collectors/browser_act_utils.py` | ✅ |
+| Извлечение полного текста | `processing/text_extractor.py` | ✅ |
+| FastAPI веб-дашборд | `web_app.py` | ✅ |
 | Одноразовый запуск / тест | `run_once.py` | ✅ |
-| BrowserAct API тестер | `test_browseract.py` | ✅ |
 
 ### В разработке / не начато ⬜
 
 | Компонент | Файл | Приоритет |
 |-----------|------|-----------|
-| Извлечение полного текста статьи | `collectors/text_extractor.py` | P1 |
 | Telegram бот (уведомления) | `bot/` | P1 |
 | Планировщик (APScheduler) | `scheduler/jobs.py` | P2 |
 | Industry RSS коллектор | `collectors/industry_rss.py` | P2 |
-| BrowserAct cloud коллектор | `collectors/browseract_collector.py` | P3 (частично) |
 | Telegram каналы | `collectors/telegram_channels.py` | P3 |
 
-### Ключевые технические решения (итоги Phase 1)
+### Ключевые технические решения
 
 **browser-act-cli вместо облачного BrowserAct API**
 
@@ -55,7 +57,7 @@
 
 Установка: `uv tool install browser-act-cli --python 3.12`  
 Путь на Windows: `C:\Users\admin\.local\bin\browser-act.exe`  
-Браузер для Sostav: `browser_id = 90674564485747216` (тип: stealth, normal mode)
+Общий browser_id: `90674564485747216` (stealth, normal mode)
 
 **Keyword filter: обработка кавычек**
 
@@ -65,11 +67,53 @@
 r"медиагрупп.{0,8}рим"  # покрывает «РИМ», "РИМ", РИМ — любые варианты
 ```
 
-**Проверенные результаты (тест 2026-04-15)**
+**Извлечение полного текста статей (`processing/text_extractor.py`)**
 
-- Sostav.ru: 30 статей → 3 релевантных → LLM conf=0.95 → sentiment=positive
-- Google News: 10 статей → 1 релевантная → LLM conf=0.95 → sentiment=neutral
-- Дедупликация между запусками работает корректно
+Три стратегии в зависимости от URL:
+
+1. **Google News** (`news.google.com/rss/articles/CBMi...`) — encoded URL, не редиректит на статью.
+   Решение: `googlenewsdecoder.new_decoderv1(url)` → реальный URL → aiohttp + trafilatura.
+   Результат: 9/10 статей получают полный текст.
+
+2. **Dzen.ru** (`dzen.ru/a/...`) — JS-рендеринг.
+   Решение: browser-act-cli `get markdown` → plain text.
+
+3. **Остальные URL** — aiohttp fetch + trafilatura.
+   `_fetch_html` возвращает `(html, final_url)` — trafilatura получает финальный URL после редиректов.
+
+**Dzen коллектор: реальные URL через JS eval**
+
+Dzen скрывает URL статей в JS event handlers — они недоступны в markdown.
+Решение: после скрола страницы — `browser-act eval` с JS-запросом:
+```javascript
+Array.from(document.querySelectorAll('a[href*="utm_source=yxnews"]')).map(a => a.href)
+```
+Возвращает реальные URLs статей (kommersant.ru, business-gazeta.ru, realnoevremya.ru и т.д.).
+Позиционный матчинг с распарсенными статьями из markdown. Дубли удаляются (order-preserving).
+Результат: 2/3 статей получают полный текст (1 — paywall).
+
+**Веб-дашборд (`web_app.py`)**
+
+FastAPI + SSE-стриминг. Запуск: `python web_app.py` → http://localhost:8000
+- Левая панель: live-терминал (SSE-стриминг вывода run_once.py subprocess)
+- Правая панель: карточки статей из SQLite (тональность, источник, дата, заголовок, summary, теги)
+- Управление: dropdown источника, чекбоксы skip-llm/skip-extract, кнопка запуска
+- После завершения — автообновление карточек
+
+**Проверенные результаты (полный прогон 2026-04-15, --source all)**
+
+- Google News: 61 статья → 8 релевантных → LLM conf ≥ 0.85
+- AdIndex: 5 статей → 0 релевантных (все об отраслевых конференциях без РИМ)
+- Dzen: 19 статей → 3 релевантных → LLM conf ≥ 0.85
+- Sostav: 0 статей (WebSocket ошибка `"no close frame received or sent"`)
+- Итог: 11 статей сохранено, sentiment: positive=6, neutral=4, negative=1
+- Text extraction (после фиксов): Google News 9/10, Dzen 2/3
+
+**Sostav.ru нестабильность**
+
+Периодически получает `{"ok":false,"error":"no close frame received or sent"}` — обрыв WebSocket в browser-act.
+Некритично: Google News и Dzen покрывают большинство публикаций.
+Возможное решение: retry с экспоненциальным backoff.
 
 ---
 
