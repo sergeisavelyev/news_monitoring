@@ -14,6 +14,7 @@ The snippet is rich enough for LLM relevance filtering.
 import hashlib
 import logging
 import re
+from datetime import datetime, timedelta
 from urllib.parse import quote
 
 from collectors.base import BaseCollector
@@ -29,9 +30,9 @@ SCROLL_WAIT_MS = 3000   # wait after each scroll for lazy-loaded content
 
 # Russian date patterns appearing in Dzen search results
 _DATE_RE = re.compile(
-    r"\d{1,2}\s+\w+\s+в\s+\d{1,2}:\d{2}"    # "26 марта в 12:27"
-    r"|\d+\s+(час|мину|ден|дн|недел)\w*\s+назад"  # "2 часа назад"
-    r"|(вчера|позавчера)\s+в\s+\d{1,2}:\d{2}",    # "вчера в 09:00"
+    r"\d{1,2}\s+\w+\.?\s+в\s+\d{1,2}:\d{2}"        # "26 марта в 12:27" / "26 апр. в 12:27"
+    r"|\d+\s+(час|мину|ден|дн|недел)\w*\s+назад"    # "2 часа назад"
+    r"|(вчера|позавчера|сегодня)\s+в\s+\d{1,2}:\d{2}",  # "вчера/сегодня в 09:00"
     re.IGNORECASE,
 )
 
@@ -46,6 +47,91 @@ _SKIP_LINE_RE = re.compile(
     r"релевантность|хронология|группировать|период|неделя|сегодня|за всё время)$",
     re.IGNORECASE,
 )
+
+
+_MONTHS_RU = {
+    # полные формы
+    "января": 1, "февраля": 2, "марта": 3, "апреля": 4,
+    "мая": 5, "июня": 6, "июля": 7, "августа": 8,
+    "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12,
+    # сокращённые (Dzen иногда пишет "апр.", "дек." и т.д.)
+    "янв": 1, "фев": 2, "мар": 3, "апр": 4,
+    "май": 5, "июн": 6, "июл": 7, "авг": 8,
+    "сен": 9, "окт": 10, "ноя": 11, "дек": 12,
+}
+
+
+def _parse_dzen_date(date_str: str) -> str | None:
+    """Convert Dzen relative/partial date strings to ISO 8601.
+
+    Handles:
+      "26 марта в 12:27"     → absolute date this/last year
+      "вчера в 09:00"        → yesterday
+      "позавчера в 09:00"    → two days ago
+      "2 часа назад"         → now - 2h
+      "30 минут назад"       → now - 30m
+      "3 дня назад"          → now - 3d
+      "2 недели назад"       → now - 2w
+    """
+    now = datetime.now()
+    s = date_str.strip().lower()
+
+    # "сегодня в 14:30"
+    m = re.match(r"сегодня\s+в\s+(\d{1,2}):(\d{2})", s)
+    if m:
+        hour, minute = m.groups()
+        dt = now.replace(hour=int(hour), minute=int(minute), second=0, microsecond=0)
+        return dt.isoformat()
+
+    # "26 марта в 12:27" / "26 апр. в 12:27"
+    m = re.match(r"(\d{1,2})\s+(\w+?)\.?\s+в\s+(\d{1,2}):(\d{2})", s)
+    if m:
+        day, month_name, hour, minute = m.groups()
+        month = _MONTHS_RU.get(month_name)
+        if month:
+            try:
+                dt = datetime(now.year, month, int(day), int(hour), int(minute))
+                if dt > now + timedelta(days=1):  # future date → last year
+                    dt = dt.replace(year=now.year - 1)
+                return dt.isoformat()
+            except ValueError:
+                pass
+
+    # "вчера в 09:00"
+    m = re.match(r"вчера\s+в\s+(\d{1,2}):(\d{2})", s)
+    if m:
+        hour, minute = m.groups()
+        dt = (now - timedelta(days=1)).replace(hour=int(hour), minute=int(minute), second=0, microsecond=0)
+        return dt.isoformat()
+
+    # "позавчера в 09:00"
+    m = re.match(r"позавчера\s+в\s+(\d{1,2}):(\d{2})", s)
+    if m:
+        hour, minute = m.groups()
+        dt = (now - timedelta(days=2)).replace(hour=int(hour), minute=int(minute), second=0, microsecond=0)
+        return dt.isoformat()
+
+    # "2 часа назад"
+    m = re.match(r"(\d+)\s+час\w*\s+назад", s)
+    if m:
+        return (now - timedelta(hours=int(m.group(1)))).isoformat()
+
+    # "30 минут назад"
+    m = re.match(r"(\d+)\s+мину\w*\s+назад", s)
+    if m:
+        return (now - timedelta(minutes=int(m.group(1)))).isoformat()
+
+    # "3 дня назад" / "5 дней назад"
+    m = re.match(r"(\d+)\s+(?:ден|дн|день)\w*\s+назад", s)
+    if m:
+        return (now - timedelta(days=int(m.group(1)))).isoformat()
+
+    # "2 недели назад"
+    m = re.match(r"(\d+)\s+недел\w*\s+назад", s)
+    if m:
+        return (now - timedelta(weeks=int(m.group(1)))).isoformat()
+
+    return None
 
 
 def _clean(line: str) -> str:
@@ -201,7 +287,7 @@ class DzenCollector(BaseCollector):
                     source=f"Dzen / {a['source_label']}",
                     source_type="dzen",
                     snippet=a["snippet"],
-                    published_at=a["date"],
+                    published_at=_parse_dzen_date(a["date"]),
                 ))
 
         logger.info("Dzen: collected %d total", len(items))

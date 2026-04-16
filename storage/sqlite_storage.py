@@ -37,13 +37,19 @@ class SQLiteStorage:
                     ai_topics     TEXT,
                     ai_key_facts  TEXT,
                     created_at    TEXT DEFAULT (datetime('now')),
-                    notified      INTEGER DEFAULT 0
+                    notified      INTEGER DEFAULT 0,
+                    filter_status TEXT DEFAULT 'saved'
                 );
                 CREATE INDEX IF NOT EXISTS idx_news_hash     ON news(content_hash);
                 CREATE INDEX IF NOT EXISTS idx_news_date     ON news(created_at);
                 CREATE INDEX IF NOT EXISTS idx_news_notified ON news(notified);
                 CREATE INDEX IF NOT EXISTS idx_news_source   ON news(source_type);
             """)
+            # migration: add filter_status if DB already exists without it
+            try:
+                conn.execute("ALTER TABLE news ADD COLUMN filter_status TEXT DEFAULT 'saved'")
+            except Exception:
+                pass
         logger.debug("DB initialized at %s", self.db_path)
 
     def exists(self, content_hash: str) -> bool:
@@ -60,7 +66,7 @@ class SQLiteStorage:
             ).fetchone()
             return row is not None
 
-    def save(self, item: NewsItem) -> Optional[int]:
+    def save(self, item: NewsItem, filter_status: str = "saved") -> Optional[int]:
         try:
             with self._get_conn() as conn:
                 cursor = conn.execute(
@@ -68,8 +74,8 @@ class SQLiteStorage:
                        (content_hash, title, url, source, source_type,
                         published_at, snippet, full_text,
                         ai_summary, ai_sentiment, ai_relevance,
-                        ai_topics, ai_key_facts)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        ai_topics, ai_key_facts, filter_status)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         item.content_hash,
                         item.title,
@@ -84,10 +90,11 @@ class SQLiteStorage:
                         item.ai_relevance,
                         json.dumps(item.ai_topics or [], ensure_ascii=False),
                         json.dumps(item.ai_key_facts or [], ensure_ascii=False),
+                        filter_status,
                     ),
                 )
                 if cursor.lastrowid:
-                    logger.info("Saved: %s", item.title[:80])
+                    logger.info("Saved [%s]: %s", filter_status, item.title[:80])
                     return cursor.lastrowid
                 else:
                     logger.debug("Duplicate skipped: %s", item.title[:80])
@@ -96,10 +103,12 @@ class SQLiteStorage:
             logger.error("Save error for %r: %s", item.title, e)
             return None
 
-    def get_latest(self, limit: int = 10) -> list[dict]:
+    def get_latest(self, limit: int = 200, include_rejected: bool = False) -> list[dict]:
         with self._get_conn() as conn:
+            where = "" if include_rejected else "WHERE filter_status IN ('saved') OR filter_status IS NULL"
             rows = conn.execute(
-                "SELECT * FROM news ORDER BY created_at DESC LIMIT ?", (limit,)
+                f"SELECT * FROM news {where} ORDER BY COALESCE(published_at, created_at) DESC LIMIT ?",
+                (limit,)
             ).fetchall()
             return [dict(r) for r in rows]
 

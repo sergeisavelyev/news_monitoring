@@ -50,6 +50,7 @@ GOOGLE_NEWS_QUERIES = [
     '"Rim Group" наружная реклама',
     '"РИМ" наружная реклама',
     'rimgroup.ru',
+    '"Илья Фомин" реклама',
 ]
 
 BROWSERACT_QUERIES = [
@@ -67,23 +68,25 @@ INDUSTRY_RSS_SOURCES = {
 }
 
 # === Keyword filter patterns (regex, case-insensitive) ===
-INCLUDE_PATTERNS = [
-    r"медиагрупп.{0,8}рим",  # медиагрупп(а/е/у) (+кавычки) рим — любые варианты
-    r"rim\s*group",
-    r"rimgroup",
-    r"рим\s*груп",
-    r"рим.{0,20}наружн",
-    r"рим.{0,20}(ooh|outdoor|билборд)",
-    r"rimgroup\.ru",
-]
+# Пустой список = пропускать всё (фильтрация на стороне LLM)
+INCLUDE_PATTERNS: list[str] = []
 
 EXCLUDE_PATTERNS = [
     r"древн(ий|его|ему)\s+рим",
-    r"рим\s*(итали|вечный\s+город)",
+    r"рим.{0,15}(вечный\s+город)",
     r"римск(ая|ое|ий|ого)\s+(импери|прав|клуб|папа)",
     r"\broma\b",
     r"рим\s+и\s+(париж|лондон|мадрид)",
+    r"греко.?римск",
+    r"грозн(ый|ого|ом)",
+    r"чечн(я|и|ю|ей|е)",
+    r"\bиран(а|е|у|ом)?\b",
+    r"махачкал",
+    r"\bитали[ию]\b",               # Италию / Италии
 ]
+
+# Статьи старше этого количества дней отбрасываются
+MAX_ARTICLE_AGE_DAYS = 365
 
 # === Database ===
 DB_PATH = os.path.join(os.path.dirname(__file__), "news_monitor.db")

@@ -16,15 +16,19 @@ def _text(item: NewsItem) -> str:
 def passes(item: NewsItem) -> bool:
     text = _text(item)
 
-    matched_include = any(p.search(text) for p in _include)
     matched_exclude = any(p.search(text) for p in _exclude)
+    if matched_exclude:
+        logger.info("EXCLUDE hit: %s", item.title[:80])
+        return False
 
+    # If INCLUDE list is empty — pass everything (LLM does the filtering)
+    if not _include:
+        return True
+
+    matched_include = any(p.search(text) for p in _include)
     if matched_include:
         logger.info("INCLUDE hit: %s", item.title[:80])
         return True
-    if matched_exclude:
-        logger.info("EXCLUDE hit (no include): %s", item.title[:80])
-        return False
 
-    logger.info("No pattern match, skip: %r", item.title[:80])
+    logger.info("No include match, skip: %r", item.title[:80])
     return False

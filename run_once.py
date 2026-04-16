@@ -27,7 +27,7 @@ logging.basicConfig(
 logger = logging.getLogger("run_once")
 
 
-async def main(skip_llm: bool, limit: int | None, source: str, skip_extract: bool = False):
+async def main(skip_llm: bool, limit: int | None, source: str, skip_extract: bool = False, skip_keyword: bool = False, debug_mode: bool = False):
     from collectors.google_news import GoogleNewsCollector
     from collectors.browseract_collector import BrowserActCollector
     from processing.pipeline import Pipeline
@@ -93,7 +93,7 @@ async def main(skip_llm: bool, limit: int | None, source: str, skip_extract: boo
             print(f"       URL: {item.url}")
         print("-" * 40)
 
-    pipeline = Pipeline(storage=storage, skip_llm=skip_llm, skip_extract=skip_extract)
+    pipeline = Pipeline(storage=storage, skip_llm=skip_llm, skip_extract=skip_extract, skip_keyword=skip_keyword, debug_mode=debug_mode)
     saved = await pipeline.run(items)
 
     print("\n" + "=" * 60)
@@ -125,6 +125,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--skip-llm", action="store_true", help="Skip LLM calls (keyword filter only)")
     parser.add_argument("--skip-extract", action="store_true", help="Skip full-text extraction (faster, no trafilatura)")
+    parser.add_argument("--no-filter", action="store_true", help="Skip all filters (save everything to DB)")
+    parser.add_argument("--debug", action="store_true", help="Debug mode: save rejected articles too (for debug view in UI)")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of Google News queries")
     parser.add_argument(
         "--source", default="google",
@@ -133,4 +135,11 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    asyncio.run(main(skip_llm=args.skip_llm, limit=args.limit, source=args.source, skip_extract=args.skip_extract))
+    asyncio.run(main(
+        skip_llm=args.skip_llm or args.no_filter,
+        skip_extract=args.skip_extract,
+        skip_keyword=args.no_filter,
+        debug_mode=args.debug,
+        limit=args.limit,
+        source=args.source,
+    ))

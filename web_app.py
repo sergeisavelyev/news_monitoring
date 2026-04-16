@@ -21,13 +21,14 @@ DB_PATH = BASE_DIR / "news_monitor.db"
 app = FastAPI()
 
 
-def get_articles(limit: int = 200) -> list[dict]:
+def get_articles(limit: int = 200, include_rejected: bool = False) -> list[dict]:
     if not DB_PATH.exists():
         return []
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    where = "" if include_rejected else "WHERE filter_status IN ('saved') OR filter_status IS NULL"
     rows = conn.execute(
-        "SELECT * FROM news ORDER BY created_at DESC LIMIT ?", (limit,)
+        f"SELECT * FROM news {where} ORDER BY COALESCE(published_at, created_at) DESC LIMIT ?", (limit,)
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -119,6 +120,14 @@ HTML = r"""<!DOCTYPE html>
   .card.positive { border-left-color: #34c759; }
   .card.negative { border-left-color: #ff3b30; }
   .card.neutral  { border-left-color: #ff9500; }
+  /* debug filter status overrides sentiment color */
+  .card.filter-passed     { border-left-color: #34c759; background: #f6fff9; }
+  .card.filter-rejected   { border-left-color: #ff3b30; background: #fff5f5; opacity: .85; }
+  .card.filter-unfiltered { border-left-color: #aaa; background: #fafafa; opacity: .7; }
+  .filter-tag { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px; }
+  .filter-tag.passed     { background: #e8f9ee; color: #1a7a35; }
+  .filter-tag.rejected   { background: #ffeeed; color: #c0392b; }
+  .filter-tag.unfiltered { background: #f0f0f0; color: #888; }
   .card-meta {
     display: flex; gap: 6px; align-items: center;
     font-size: 11px; color: #888; margin-bottom: 6px; flex-wrap: wrap;
@@ -157,6 +166,7 @@ HTML = r"""<!DOCTYPE html>
     </select>
     <label class="cb-label"><input type="checkbox" id="skip-llm"> без LLM</label>
     <label class="cb-label"><input type="checkbox" id="skip-extract"> без текста</label>
+    <label class="cb-label"><input type="checkbox" id="debug-mode"> отладка фильтров</label>
     <button id="run-btn">▶ Запустить</button>
   </div>
   <div class="stats" id="stats">загрузка…</div>
@@ -202,26 +212,51 @@ function classifyLine(text) {
 }
 
 // ── Render articles ───────────────────────────────────────
-function renderArticles(articles) {
+function renderArticles(articles, debugMode) {
   const container = $('articles');
   if (!articles.length) {
     container.innerHTML = '<div class="no-articles">Нет статей в базе</div>';
     return;
   }
-  $('articles-title').textContent = `Статьи в базе (${articles.length})`;
+  const passed     = articles.filter(a => a.filter_status === 'saved' || !a.filter_status).length;
+  const rejected   = articles.filter(a => a.filter_status === 'keyword_rejected').length;
+  const unfiltered = articles.filter(a => a.filter_status === 'unfiltered').length;
+  $('articles-title').textContent = debugMode
+    ? `Отладка: ${articles.length} статей — ✅ ${passed} прошли, ❌ ${rejected} отклонены` +
+      (unfiltered ? `, ⬜ ${unfiltered} без фильтра` : '')
+    : `Статьи в базе (${articles.length})`;
+
   container.innerHTML = articles.map(a => {
+    const isRejected = a.filter_status === 'keyword_rejected';
     const sent = a.ai_sentiment || 'none';
     const sentLabel = { positive:'позитив', negative:'негатив', neutral:'нейтрал', none:'—' }[sent] || sent;
     const topics = parseTopics(a.ai_topics);
+
+    let cardClass, filterTag;
+    if (debugMode) {
+      const isUnfiltered = a.filter_status === 'unfiltered';
+      cardClass = isUnfiltered ? 'filter-unfiltered' : isRejected ? 'filter-rejected' : 'filter-passed';
+      filterTag = isUnfiltered
+        ? `<span class="filter-tag unfiltered">⬜ без фильтра</span>`
+        : isRejected
+          ? `<span class="filter-tag rejected">❌ отклонено</span>`
+          : `<span class="filter-tag passed">✅ прошло</span>`;
+    } else {
+      cardClass = sent;
+      filterTag = `<span class="badge ${sent}">${sentLabel}</span>`;
+    }
+
     return `
-    <div class="card ${sent}">
+    <div class="card ${cardClass}">
       <div class="card-meta">
-        <span class="badge ${sent}">${sentLabel}</span>
+        ${filterTag}
+        ${!debugMode && !isRejected && a.ai_sentiment ? '' : ''}
         <span>${a.source || ''}</span>
-        <span>${formatDate(a.created_at)}</span>
+        <span title="добавлено: ${formatDate(a.created_at)}">${formatDate(a.published_at || a.created_at)}</span>
       </div>
       <div class="card-title"><a href="${a.url}" target="_blank">${a.title}</a></div>
       ${a.ai_summary ? `<div class="card-summary">${a.ai_summary}</div>` : ''}
+      ${a.snippet && !a.ai_summary && isRejected ? `<div class="card-summary" style="color:#999">${a.snippet.slice(0,200)}</div>` : ''}
       ${topics.length ? `<div class="topics">${topics.map(t=>`<span class="topic">${t}</span>`).join('')}</div>` : ''}
     </div>`;
   }).join('');
@@ -229,11 +264,13 @@ function renderArticles(articles) {
 
 // ── Load articles + stats ─────────────────────────────────
 async function loadArticles() {
+  const debugMode = $('debug-mode') && $('debug-mode').checked;
+  const url = debugMode ? '/api/articles?include_rejected=true' : '/api/articles';
   const [arts, stats] = await Promise.all([
-    fetch('/api/articles').then(r => r.json()),
+    fetch(url).then(r => r.json()),
     fetch('/api/stats').then(r => r.json()),
   ]);
-  renderArticles(arts);
+  renderArticles(arts, debugMode);
   $('stats').textContent =
     `всего: ${stats.total}` +
     (stats.by_sentiment.positive ? ` · 🟢${stats.by_sentiment.positive}` : '') +
@@ -242,10 +279,13 @@ async function loadArticles() {
 }
 
 // ── Run pipeline ──────────────────────────────────────────
+$('debug-mode').addEventListener('change', loadArticles);
+
 $('run-btn').addEventListener('click', () => {
-  const source    = $('source').value;
-  const skipLlm   = $('skip-llm').checked;
-  const skipEx    = $('skip-extract').checked;
+  const source     = $('source').value;
+  const skipLlm    = $('skip-llm').checked;
+  const skipEx     = $('skip-extract').checked;
+  const debugMode  = $('debug-mode').checked;
 
   const btn = $('run-btn');
   btn.disabled = true;
@@ -255,8 +295,9 @@ $('run-btn').addEventListener('click', () => {
   term.innerHTML = '';
 
   const params = new URLSearchParams({ source });
-  if (skipLlm) params.set('skip_llm', 'true');
-  if (skipEx)  params.set('skip_extract', 'true');
+  if (skipLlm)   params.set('skip_llm', 'true');
+  if (skipEx)    params.set('skip_extract', 'true');
+  if (debugMode) params.set('debug_mode', 'true');
 
   const es = new EventSource(`/api/run?${params}`);
 
@@ -297,8 +338,8 @@ def index():
 
 
 @app.get("/api/articles")
-def api_articles():
-    return get_articles()
+def api_articles(include_rejected: bool = Query(False)):
+    return get_articles(include_rejected=include_rejected)
 
 
 @app.get("/api/stats")
@@ -311,12 +352,15 @@ async def api_run(
     source: str = Query("google"),
     skip_llm: bool = Query(False),
     skip_extract: bool = Query(False),
+    debug_mode: bool = Query(False),
 ):
     cmd = [sys.executable, "run_once.py", "--source", source]
-    if skip_llm:
+    if skip_llm or debug_mode:
         cmd.append("--skip-llm")
     if skip_extract:
         cmd.append("--skip-extract")
+    if debug_mode:
+        cmd.append("--debug")
 
     async def generate():
         proc = await asyncio.create_subprocess_exec(

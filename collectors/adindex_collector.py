@@ -97,9 +97,9 @@ def _extract_articles_via_eval() -> list[dict]:
         "Array.from(document.querySelectorAll('a[href]'))"
         ".filter(a => (/\\/news\\/[^/]+\\/20\\d{2}\\//.test(a.href) || "
         "             /\\/publication\\/[^/]+\\/20\\d{2}\\//.test(a.href) || "
-        "             (/\\.phtml$/.test(a.href) && /adindex\\.ru/.test(a.href))))"
+        "             (/\\.phtml$/.test(a.href) && /adindex\\.ru/.test(a.href) && /\\/20\\d{2}\\//.test(a.href))))"
         ".map(a => ({title: a.innerText.trim().slice(0,200), url: a.href}))"
-        ".filter(x => x.title.length > 10)"
+        ".filter(x => x.title.length > 15)"
         ".slice(0, 50)"
         ")"
     )
