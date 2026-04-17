@@ -101,10 +101,7 @@ async def main(skip_llm: bool, limit: int | None, source: str, skip_extract: boo
     print("=" * 60)
 
     for item in saved:
-        sentiment_icon = {"positive": "🟢", "negative": "🔴", "neutral": "🟡"}.get(
-            item.ai_sentiment or "", "⚪"
-        )
-        print(f"\n{sentiment_icon} {item.title}")
+        print(f"\n• {item.title}")
         print(f"   Source : {item.source}")
         print(f"   URL    : {item.url}")
         if item.ai_summary:
@@ -117,8 +114,7 @@ async def main(skip_llm: bool, limit: int | None, source: str, skip_extract: boo
 
     stats = storage.stats()
     print(f"\nDB total: {stats['total']} articles")
-    print(f"By sentiment: {stats['by_sentiment']}")
-    print(f"By source:    {stats['by_source']}")
+    print(f"By source: {stats['by_source']}")
 
 
 if __name__ == "__main__":

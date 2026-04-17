@@ -11,7 +11,6 @@ SYSTEM_PROMPT = """Ты — аналитик рекламного рынка. С
 Ответь строго в JSON (без markdown):
 {
   "summary": "2-3 предложения: суть новости",
-  "sentiment": "positive | neutral | negative",
   "topics": ["список тем: сделка, финансы, продукт, кадры, регулирование, ..."],
   "key_facts": ["ключевые факты и цифры из статьи"]
 }"""
@@ -37,11 +36,10 @@ class Summarizer:
             return
 
         item.ai_summary = result.get("summary", "")
-        item.ai_sentiment = result.get("sentiment", "neutral")
         item.ai_topics = result.get("topics", [])
         item.ai_key_facts = result.get("key_facts", [])
 
         logger.info(
-            "[Summarizer] %s | sentiment=%s | topics=%s",
-            item.title[:60], item.ai_sentiment, item.ai_topics
+            "[Summarizer] %s | topics=%s",
+            item.title[:60], item.ai_topics
         )

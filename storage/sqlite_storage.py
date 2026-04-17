@@ -32,7 +32,6 @@ class SQLiteStorage:
                     snippet       TEXT,
                     full_text     TEXT,
                     ai_summary    TEXT,
-                    ai_sentiment  TEXT,
                     ai_relevance  REAL,
                     ai_topics     TEXT,
                     ai_key_facts  TEXT,
@@ -73,9 +72,9 @@ class SQLiteStorage:
                     """INSERT OR IGNORE INTO news
                        (content_hash, title, url, source, source_type,
                         published_at, snippet, full_text,
-                        ai_summary, ai_sentiment, ai_relevance,
+                        ai_summary, ai_relevance,
                         ai_topics, ai_key_facts, filter_status)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         item.content_hash,
                         item.title,
@@ -86,7 +85,6 @@ class SQLiteStorage:
                         item.snippet,
                         item.full_text,
                         item.ai_summary,
-                        item.ai_sentiment,
                         item.ai_relevance,
                         json.dumps(item.ai_topics or [], ensure_ascii=False),
                         json.dumps(item.ai_key_facts or [], ensure_ascii=False),
@@ -129,7 +127,4 @@ class SQLiteStorage:
             by_source = dict(conn.execute(
                 "SELECT source, COUNT(*) FROM news GROUP BY source"
             ).fetchall())
-            by_sentiment = dict(conn.execute(
-                "SELECT ai_sentiment, COUNT(*) FROM news WHERE ai_sentiment IS NOT NULL GROUP BY ai_sentiment"
-            ).fetchall())
-            return {"total": total, "by_source": by_source, "by_sentiment": by_sentiment}
+            return {"total": total, "by_source": by_source}

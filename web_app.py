@@ -36,15 +36,12 @@ def get_articles(limit: int = 200, include_rejected: bool = False) -> list[dict]
 
 def get_stats() -> dict:
     if not DB_PATH.exists():
-        return {"total": 0, "by_source": {}, "by_sentiment": {}}
+        return {"total": 0, "by_source": {}}
     conn = sqlite3.connect(DB_PATH)
     total = conn.execute("SELECT COUNT(*) FROM news").fetchone()[0]
     by_source = dict(conn.execute("SELECT source, COUNT(*) FROM news GROUP BY source").fetchall())
-    by_sentiment = dict(conn.execute(
-        "SELECT ai_sentiment, COUNT(*) FROM news WHERE ai_sentiment IS NOT NULL GROUP BY ai_sentiment"
-    ).fetchall())
     conn.close()
-    return {"total": total, "by_source": by_source, "by_sentiment": by_sentiment}
+    return {"total": total, "by_source": by_source}
 
 
 HTML = r"""<!DOCTYPE html>
@@ -118,9 +115,6 @@ HTML = r"""<!DOCTYPE html>
     box-shadow: 0 1px 3px rgba(0,0,0,.06);
   }
   .card.positive { border-left-color: #34c759; }
-  .card.negative { border-left-color: #ff3b30; }
-  .card.neutral  { border-left-color: #ff9500; }
-  /* debug filter status overrides sentiment color */
   .card.filter-passed     { border-left-color: #34c759; background: #f6fff9; }
   .card.filter-rejected   { border-left-color: #ff3b30; background: #fff5f5; opacity: .85; }
   .card.filter-unfiltered { border-left-color: #aaa; background: #fafafa; opacity: .7; }
@@ -228,8 +222,6 @@ function renderArticles(articles, debugMode) {
 
   container.innerHTML = articles.map(a => {
     const isRejected = a.filter_status === 'keyword_rejected';
-    const sent = a.ai_sentiment || 'none';
-    const sentLabel = { positive:'позитив', negative:'негатив', neutral:'нейтрал', none:'—' }[sent] || sent;
     const topics = parseTopics(a.ai_topics);
 
     let cardClass, filterTag;
@@ -242,21 +234,19 @@ function renderArticles(articles, debugMode) {
           ? `<span class="filter-tag rejected">❌ отклонено</span>`
           : `<span class="filter-tag passed">✅ прошло</span>`;
     } else {
-      cardClass = sent;
-      filterTag = `<span class="badge ${sent}">${sentLabel}</span>`;
+      cardClass = '';
+      filterTag = '';
     }
 
     return `
     <div class="card ${cardClass}">
       <div class="card-meta">
         ${filterTag}
-        ${!debugMode && !isRejected && a.ai_sentiment ? '' : ''}
         <span>${a.source || ''}</span>
         <span title="добавлено: ${formatDate(a.created_at)}">${formatDate(a.published_at || a.created_at)}</span>
       </div>
       <div class="card-title"><a href="${a.url}" target="_blank">${a.title}</a></div>
-      ${a.ai_summary ? `<div class="card-summary">${a.ai_summary}</div>` : ''}
-      ${a.snippet && !a.ai_summary && isRejected ? `<div class="card-summary" style="color:#999">${a.snippet.slice(0,200)}</div>` : ''}
+      ${a.ai_summary ? `<div class="card-summary">${a.ai_summary}</div>` : (a.snippet ? `<div class="card-summary" style="color:#999">${a.snippet.slice(0,250)}</div>` : '')}
       ${topics.length ? `<div class="topics">${topics.map(t=>`<span class="topic">${t}</span>`).join('')}</div>` : ''}
     </div>`;
   }).join('');
@@ -271,11 +261,7 @@ async function loadArticles() {
     fetch('/api/stats').then(r => r.json()),
   ]);
   renderArticles(arts, debugMode);
-  $('stats').textContent =
-    `всего: ${stats.total}` +
-    (stats.by_sentiment.positive ? ` · 🟢${stats.by_sentiment.positive}` : '') +
-    (stats.by_sentiment.negative ? ` · 🔴${stats.by_sentiment.negative}` : '') +
-    (stats.by_sentiment.neutral  ? ` · 🟡${stats.by_sentiment.neutral}`  : '');
+  $('stats').textContent = `всего: ${stats.total}`;
 }
 
 // ── Run pipeline ──────────────────────────────────────────

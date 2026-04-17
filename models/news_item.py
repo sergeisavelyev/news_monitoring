@@ -16,7 +16,6 @@ class NewsItem:
 
     # AI fields
     ai_summary: Optional[str] = None
-    ai_sentiment: Optional[str] = None  # positive | neutral | negative
     ai_relevance: Optional[float] = None
     ai_topics: Optional[list] = field(default_factory=list)
     ai_key_facts: Optional[list] = field(default_factory=list)
