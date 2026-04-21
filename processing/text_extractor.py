@@ -120,6 +120,7 @@ async def _extract_one(item: NewsItem, session: aiohttp.ClientSession, sem: asyn
         # Decode Google News CBMi... URL to real article URL, then fetch
         fetch_url = await loop.run_in_executor(None, _decode_google_news_url, item.url)
         if fetch_url != item.url:
+            item.url = fetch_url  # update so real URL is saved to DB and posted to Telegram
             logger.debug("Google News decoded: %s", fetch_url)
         async with sem:
             html, final_url = await _fetch_html(fetch_url, session)

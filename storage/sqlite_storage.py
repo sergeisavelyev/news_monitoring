@@ -113,13 +113,29 @@ class SQLiteStorage:
     def get_unnotified(self) -> list[dict]:
         with self._get_conn() as conn:
             rows = conn.execute(
-                "SELECT * FROM news WHERE notified = 0 ORDER BY created_at ASC"
+                """SELECT * FROM news
+                   WHERE notified = 0
+                     AND (filter_status = 'saved' OR filter_status IS NULL)
+                   ORDER BY COALESCE(published_at, created_at) ASC"""
             ).fetchall()
             return [dict(r) for r in rows]
 
     def mark_notified(self, news_id: int):
         with self._get_conn() as conn:
             conn.execute("UPDATE news SET notified = 1 WHERE id = ?", (news_id,))
+
+    def search(self, query: str, limit: int = 10) -> list[dict]:
+        pattern = f"%{query}%"
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                """SELECT * FROM news
+                   WHERE (title LIKE ? OR ai_summary LIKE ? OR snippet LIKE ?)
+                     AND (filter_status IN ('saved') OR filter_status IS NULL)
+                   ORDER BY COALESCE(published_at, created_at) DESC
+                   LIMIT ?""",
+                (pattern, pattern, pattern, limit),
+            ).fetchall()
+            return [dict(r) for r in rows]
 
     def stats(self) -> dict:
         with self._get_conn() as conn:

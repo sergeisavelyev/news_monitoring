@@ -1,9 +1,9 @@
 # Спецификация: Интеллектуальный мониторинг новостей
 ## «Медиагруппа РИМ» / Rim Group
 
-**Версия:** 1.6  
+**Версия:** 1.7  
 **Дата:** 2026-04-17  
-**Статус:** В разработке (Phase 2 завершена)  
+**Статус:** В разработке (Phase 3 завершена — Telegram бот + планировщик)  
 
 ---
 
@@ -29,15 +29,69 @@
 | Извлечение полного текста | `processing/text_extractor.py` | ✅ |
 | FastAPI веб-дашборд | `web_app.py` | ✅ |
 | Одноразовый запуск / тест | `run_once.py` | ✅ |
+| Telegram бот | `bot/` | ✅ |
+| Планировщик (APScheduler) | `scheduler/jobs.py` | ✅ |
+| Точка входа | `main.py` | ✅ |
 
 ### В разработке / не начато ⬜
 
 | Компонент | Файл | Приоритет |
 |-----------|------|-----------|
-| Telegram бот (уведомления) | `bot/` | P1 |
-| Планировщик (APScheduler) | `scheduler/jobs.py` | P2 |
 | Industry RSS коллектор | `collectors/industry_rss.py` | P2 |
 | Telegram каналы | `collectors/telegram_channels.py` | P3 |
+
+### Ключевые технические решения (Phase 3 — Telegram бот)
+
+**python-telegram-bot v20+ внутри asyncio**
+
+`app.run_polling()` пытается создать собственный event loop — конфликт с `asyncio.run()`.
+Правильный паттерн запуска:
+```python
+async with app:
+    await app.start()
+    await app.updater.start_polling()
+    scheduler.start()
+    await asyncio.Event().wait()  # блокируем до Ctrl+C
+    scheduler.shutdown()
+    await app.updater.stop()
+    await app.stop()
+```
+
+**Google News RSS URLs в уведомлениях**
+
+URL вида `news.google.com/rss/articles/CBMi...` не открываются в браузере.
+Решение в `bot/formatter.py`: функция `_usable_url()` — скрывает кнопку «Читать» для таких URL.
+
+**HTML в snippet из RSS-лент**
+
+RSS-ленты хранят snippet с сырым HTML (`<a href="...">текст</a>`).
+При отображении в Telegram HTML mode это ломает форматирование.
+Решение: `_strip_html()` в `bot/formatter.py` — убирает теги, unescapes entities.
+
+**Сортировка уведомлений**
+
+`storage.get_unnotified()` сортирует по `COALESCE(published_at, created_at) ASC` —
+старые статьи отправляются первыми, новые оказываются вверху Telegram-чата.
+
+**Структура бота**
+
+- `bot/formatter.py` — форматирование NewsItem/dict → HTML для Telegram
+- `bot/notifier.py` — `TelegramNotifier.send(item)`, `send_text(text)`
+- `bot/handlers.py` — хендлеры команд (`/start`, `/latest`, `/stats`, `/search`, `/digest`, `/help`)
+- `bot/bot.py` — `build_app(storage)` — сборка Application, регистрация хендлеров
+- `scheduler/jobs.py` — `build_scheduler(storage, notifier)` — Google News каждые 30 мин, browser sources каждые 6 ч
+- `main.py` — точка входа: бот + планировщик + `notify_pending()` при старте
+
+**notify_pending при старте**
+
+При запуске `main.py` функция `notify_pending()` отправляет уведомления для всех статей
+в БД с `notified=0`. Это позволяет сначала запустить `run_once.py`, накопить статьи,
+потом запустить `main.py` — и получить все уведомления разом.
+
+**SQLiteStorage.search()**
+
+Добавлен метод `search(query, limit)` — LIKE-поиск по `title`, `ai_summary`, `snippet`.
+Используется командой `/search` в боте.
 
 ### Ключевые технические решения
 

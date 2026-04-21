@@ -88,5 +88,12 @@ EXCLUDE_PATTERNS = [
 # Статьи старше этого количества дней отбрасываются
 MAX_ARTICLE_AGE_DAYS = 365
 
+# === Scheduler intervals (minutes) ===
+SCHEDULE = {
+    "google_news": 30,
+    "industry_rss": 60,
+    "browser_sources": 360,  # 6 hours
+}
+
 # === Database ===
 DB_PATH = os.path.join(os.path.dirname(__file__), "news_monitor.db")
